@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from retriever import retrieve
 from orders import get_order
 from guardrails import detect_injection, Watchdog
+import llm
 
 
 # ---- 1. Classify -----------------------------------------------------------
@@ -50,6 +51,7 @@ class Resolution:
     amount: float = 0.0
     currency: str = "AED"
     policy_ref: str = ""
+    policy_text: str = ""   # the retrieved policy wording, used to ground the LLM reply
     reason: str = ""
     reply: str = ""
     trace: list = field(default_factory=list)
@@ -98,9 +100,9 @@ def _decide(issue, order, policy_id):
     return "escalate", 0.0, "Unclassified issue — human review"
 
 
-def _draft_reply(res, order):
-    """Grounded, human reply. The seam where a real LLM (Claude) plugs in for
-    natural phrasing; the template keeps the demo runnable with zero setup."""
+def _template_reply(res, order):
+    """Zero-setup fallback reply. Used when the LLM layer is unavailable (no key
+    or no deps). The real, AI-written reply is produced by llm.draft_reply()."""
     cur = res.currency
     if res.verdict == "refund":
         return (f"Thanks for flagging this, and sorry for the trouble. I checked your "
@@ -143,6 +145,7 @@ def resolve(ticket_text, order_id=None):
     if hits:
         _, policy, matched = hits[0]
         res.policy_ref = policy["id"]
+        res.policy_text = policy["text"]
         res.trace.append(f"retrieve policy -> {policy['id']} ({policy['title']}) "
                          f"[matched: {', '.join(matched)}]")
     else:
@@ -166,9 +169,12 @@ def resolve(ticket_text, order_id=None):
     res.trace.append(f"decide -> {verdict} "
                      f"{('AED %.0f' % amount) if amount else ''} ({reason})")
 
-    # Step 5 — draft grounded reply
+    # Step 5 — draft grounded reply.
+    # Try a real LLM first; fall back to the template if it's unavailable.
     dog.tick()
-    res.reply = _draft_reply(res, order)
-    res.trace.append(f"draft reply -> {len(res.reply)} chars (grounded in "
+    ai_reply = llm.draft_reply(res, ticket_text, res.policy_text)
+    source = "AI (claude)" if ai_reply else "template"
+    res.reply = ai_reply if ai_reply else _template_reply(res, order)
+    res.trace.append(f"draft reply [{source}] -> {len(res.reply)} chars (grounded in "
                      f"{res.policy_ref or 'n/a'})")
     return res

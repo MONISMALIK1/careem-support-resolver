@@ -1,1 +1,4 @@
-# No third-party dependencies — Python 3.8+ standard library only.
+# The core demo runs on the Python standard library alone.
+# The AI drafting layer (real LLM replies) is optional but recommended:
+openai>=1.0
+python-dotenv>=1.0
